@@ -214,7 +214,7 @@ fun getComplaintPrices(): ComplaintPricing {
     return parseComplaintPrices(info);
 }
 
-n
+
 struct ValidatorConf {
     electedFor: int32
     electionsBeginBefore: int32
@@ -243,8 +243,8 @@ struct CurrentVset {
 fun getCurrentVset(): CurrentVset {
     val vset = blockchain.configParam(34)!;
     val cs = vset.beginParse();
-    // validators_ext#12 utime_since:uint32 utime_until:uint32 
-    // total:(## 16) main:(## 16) { main <= total } { main >= 1 } 
+    // validators_ext#12 utime_since:uint32 utime_until:uint32
+    // total:(## 16) main:(## 16) { main <= total } { main >= 1 }
     // total_weight:uint64
     assert(cs.loadUint(8) == 0x12, 40);
     cs.skipBits(32 + 32 + 16 + 16);
@@ -330,7 +330,7 @@ fun sendConfirmation(addr: address, queryId: int, comment: int) {
 }
 
 fun sendValidatorSetToConfig(configAddr: int, vset: cell, queryId: int) {
-    var msg = beginCell().storeUint(0xc4ff, 17) // 0 11000100 0xff 
+    var msg = beginCell().storeUint(0xc4ff, 17) // 0 11000100 0xff
         .storeUint(configAddr, 256)
         .storeCoins(ton("1")) // ~1 gram of value to process and obtain answer
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
@@ -1109,7 +1109,7 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
     var vset = beginCell().storeUint(0x12, 8) // validators_ext#12
         .storeUint(start, 32) // utime_since:uint32
         .storeUint(start + validatorConf.electedFor, 32) // utime_until:uint32
-        .storeUint(cnt, 16) // total:(## 16) 
+        .storeUint(cnt, 16) // total:(## 16)
         .storeUint(min_f(cnt, mainValidators), 16) // main:(## 16)
         .storeUint(totalWeight, 64) // total_weight:uint64
         .storeDict(vdict) // list:(HashmapE 16 ValidatorDescr)
@@ -1359,7 +1359,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
         return;
     }
     if (op == 0x52674370) {
-        // new complaint 
+        // new complaint
         val price = registerComplaint(sAddr, inMsgBody, msgValue);
         var mode = 64;
         var ansTag = -price;
@@ -1452,7 +1452,7 @@ get fun participantList(): tuple {
         return ();
     }
     val election = unpackElect(elect!);
-    var l = ();
+    var l = [];
     var id = (1 << 255) + ((1 << 255) - 1);
     do {
         var (nextKey, fs, f) = election.members.uDictGetPrev(256, id);
@@ -1472,7 +1472,7 @@ get fun participantListExtended(): (int, int, coins, coins, tuple, bool, bool) {
         return (0, 0, ton("0"), ton("0"), (), false, false);
     }
     val election = unpackElect(elect);
-    var l = ();
+    var l = [];
     var id = (1 << 255) + ((1 << 255) - 1);
     do {
         var (nextKey, cs, found) = election.members.uDictGetPrev(256, id);
@@ -1512,7 +1512,7 @@ get fun computeReturnedStake(walletAddr: int): coins {
 get fun pastElectionIds(): tuple {
     val data = loadContractData();
     var id = (1 << 32);
-    var list = ();
+    var list = [];
     do {
         var (nextKey, fsOpt, found) = data.pastElections.uDictGetPrev(32, id);
         if (found) {

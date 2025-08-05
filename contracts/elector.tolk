@@ -69,8 +69,10 @@ fun unpackElect(election_cell: cell): Election {
 }
 
 fun packElect(election: Election): cell {
-    return beginCell().storeUint(election.electAt, 32).storeUint(election.electClose, 32).storeCoins(election
-        .minStake)
+    return beginCell()
+        .storeUint(election.electAt, 32)
+        .storeUint(election.electClose, 32)
+        .storeCoins(election.minStake)
         .storeCoins(election.totalStake)
         .storeDict(election.members)
         .storeInt(election.failed ? -1 : 0, 1)
@@ -105,10 +107,10 @@ fun unpackPastElection(fs: slice): PastElection {
 }
 
 fun packPastElection(pe: PastElection): builder {
-    return beginCell().storeUint(pe.unfreezeAt, 32).storeUint(pe.stakeHeld, 32).storeUint(
-        pe.vsetHash,
-        256
-    )
+    return beginCell()
+        .storeUint(pe.unfreezeAt, 32)
+        .storeUint(pe.stakeHeld, 32)
+        .storeUint(pe.vsetHash,256)
         .storeDict(pe.frozenDict)
         .storeCoins(pe.totalStake)
         .storeCoins(pe.bonuses)
@@ -136,11 +138,12 @@ fun unpackComplaintStatus(cs: slice): ComplaintStatus {
 }
 
 fun packComplaintStatus(cs: ComplaintStatus): builder {
-    return beginCell().storeUint(0x2d, 8).storeRef(cs.complaint).storeDict(cs.voters).storeUint(
-        cs.vsetId,
-        256
-    )
-        .storeInt(cs.weightRemaining, 64);
+    return beginCell()
+    .storeUint(0x2d, 8)
+    .storeRef(cs.complaint)
+    .storeDict(cs.voters)
+    .storeUint(cs.vsetId,256)
+    .storeInt(cs.weightRemaining, 64);
 }
 
 
@@ -172,8 +175,9 @@ fun unpackComplaint(cs: slice): ValidatorComplaint {
 }
 
 fun packComplaint(vc: ValidatorComplaint): builder {
-    return beginCell().storeInt(0xbc - 0x100, 8).storeUint(vc.validatorPubkey, 256).storeRef(vc
-        .description)
+    return beginCell().storeInt(0xbc - 0x100, 8)
+        .storeUint(vc.validatorPubkey, 256)
+        .storeRef(vc.description)
         .storeUint(vc.createdAt, 32)
         .storeUint(vc.severity, 8)
         .storeUint(vc.rewardAddr, 256)
@@ -330,14 +334,17 @@ fun sendConfirmation(addr: address, queryId: int, comment: int) {
 }
 
 fun sendValidatorSetToConfig(configAddr: int, vset: cell, queryId: int) {
-    var msg = beginCell().storeUint(0xc4ff, 17) // 0 11000100 0xff
+    var msg = beginCell()
+        .storeUint(0xc4ff, 17) // 0 11000100 0xff
         .storeUint(configAddr, 256)
         .storeCoins(ton("1")) // ~1 gram of value to process and obtain answer
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
         .storeUint(0x4e565354, 32)
         .storeUint(queryId, 64)
-        .storeRef(vset);
-    sendRawMessage(msg.endCell(), SEND_MODE_PAY_FEES_SEPARATELY);
+        .storeRef(vset)
+        .endCell();
+
+    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY);
 }
 
 // Credit management
@@ -392,7 +399,10 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     val stakeAt = cs.loadUint(32);
     val maxFactor = cs.loadUint(32);
     val adnlAddr = cs.loadUint(256);
-    val signature = cs.loadRef().beginParse().preloadBits(512);
+    val signature = cs.loadRef()
+    .beginParse()
+    .preloadBits(512);
+
     cs.assertEnd();
 
     if (
@@ -519,10 +529,10 @@ fun unfreezeWithBonuses(credits: dict, freezeDict: dict, totStakes: coins, totBo
         if (found) {
             pubkey = nextKey!;
             cs = cs!;
-            var addr = cs.loadUint(256);
-            var _ = cs.loadUint(64); //weight
-            var stake = cs.loadCoins();
-            var banned = cs.loadInt(1) != 0;
+            val addr = cs.loadUint(256);
+            val _ = cs.loadUint(64); //weight
+            val stake = cs.loadCoins();
+            val banned = cs.loadInt(1) != 0;
             cs.assertEnd();
 
             if (banned) {
@@ -630,7 +640,7 @@ fun recoverStake(op: int, sAddr: address, cs: slice, queryId: int) {
     reply.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
 }
 
-//we stopped here
+
 fun afterCodeUpgrade(sAddr: address, cs: slice, queryId: int) {
     sendMessageBack(sAddr, 0xce436f64, queryId, 0x4e436f64, ton("0"), 64);
 }
@@ -755,11 +765,12 @@ fun punish(credits: dict, frozen: dict, complaint: cell): PunishResult {
     val weight = cs.loadUint(64);
     var stake = cs.loadCoins();
     val banned = cs.loadInt(1);
+
     cs.assertEnd();
 
     var fine = min_f(stake, vc.suggestedFine + muldiv_f(stake, vc.suggestedFinePart, 1 << 32));
     stake -= fine;
-    frozen.uDictSetBuilder(
+    frozen = frozen.uDictSetBuilder(
         256,
         vc.validatorPubkey,
         beginCell().storeUint(addr, 256).storeUint(weight, 64).storeCoins(stake).storeInt(banned, 1)
@@ -768,9 +779,9 @@ fun punish(credits: dict, frozen: dict, complaint: cell): PunishResult {
     val newCredits = creditTo(credits, vc.rewardAddr, reward);
     return PunishResult {
         credits: newCredits,
-        frozen,
+        frozen: frozen,
         fineUnalloc: fine - reward,
-        fine,
+        fine: fine,
     };
 }
 
@@ -1089,11 +1100,11 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
     elect = packElect(Election {
         electAt: election.electAt,
         electClose: election.electClose,
-        minStake,
+        minStake: minStake,
         totalStake: election.totalStake,
         members: election.members,
-        failed,
-        finished,
+        failed: failed,
+        finished: finished,
     });
 
     if (cnt == 0) {
@@ -1303,9 +1314,9 @@ fun announceNewElections(ds: slice, elect: dict?, credits: dict): bool {
     val electAt = t + validatorConf.electionsBeginBefore;
     val electClose = electAt - validatorConf.electionsEndBefore;
     elect = packElect(Election {
-        electAt,
-        electClose,
-        minStake,
+        electAt: electAt,
+        electClose: electClose,
+        minStake: minStake,
         totalStake: ton("0"),
         members: createEmptyDict(),
         failed: false,

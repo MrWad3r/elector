@@ -5,6 +5,12 @@ import "@stdlib/lisp-lists"
 import "@stdlib/tvm-dicts"
 import "@stdlib/tvm-lowlevel"
 
+const newStakeMessageTag = 0x4e73744b;
+const recoverStakeMessageTag = 0x47657424;
+const upgradeCodeMessageTag = 0x4e436f64;
+const newComplaintMessageTag = 0x52674370;
+const voteForComplaintMessageTag = 0x56744370;
+
 
 struct Storage {
     curElect: dict
@@ -146,7 +152,7 @@ fun CurrentVset.getDescr(self, idx: int) {
 
 type ValidatorDescription = ValidatorDescrSimple | ValidatorDescrWithAddr;
 
-// Validator descriptor variants
+
 struct (0x53) ValidatorDescrSimple {
     pubkeyTag: uint32 = 0x8e81278a  // ed25519_pubkey tag
     pubkey: uint256
@@ -186,13 +192,13 @@ struct ValidatorInfo {
     weight: uint64
 }
 
-// Структура для результата unfreezing
+
 struct UnfreezeResult {
     credits: dict
     recovered: coins
 }
 
-// Структура для результата наказания
+
 struct PunishResult {
     credits: dict
     frozen: dict
@@ -200,9 +206,17 @@ struct PunishResult {
     fineCollected: coins
 }
 
+struct ExtendedParticipationList {
+    electAt: uint32,
+    electClose: uint32,
+    minStake: coins,
+    totalStake: coins,
+    participants: tuple,
+    failed: bool,
+    finished: bool
+}
 
 
-// Message sending functions
 fun sendMessageBack(
     dest: address,
     functionTag: uint32,
@@ -261,7 +275,7 @@ fun sendValidatorSetToConfig(configAddr: int, vset: cell, queryId: int) {
     sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY);
 }
 
-// Credit management
+
 fun creditTo(credits: dict, addr: int, amount: coins): dict {
     val (valueOpt, found) = credits.uDictGet(256, addr);
     if (found) {
@@ -272,7 +286,7 @@ fun creditTo(credits: dict, addr: int, amount: coins): dict {
     return credits;
 }
 
-// Simple transfer processing
+
 fun processSimpleTransfer(sAddr: address, msgValue: coins) {
     var data = Storage.load();
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
@@ -297,7 +311,7 @@ fun processSimpleTransfer(sAddr: address, msgValue: coins) {
     data.save();
 }
 
-// New stake processing
+
 fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
     var ds = contract.getData().beginParse();
@@ -555,7 +569,7 @@ fun recoverStake(op: int, sAddr: address, cs: slice, queryId: int) {
 
 
 fun afterCodeUpgrade(sAddr: address, cs: slice, queryId: int) {
-    sendMessageBack(sAddr, 0xce436f64, queryId, 0x4e436f64, 0, 64);
+    sendMessageBack(sAddr, 0xce436f64, queryId, upgradeCodeMessageTag, 0, 64);
 }
 
 fun upgradeCode(sAddr: address, cs: slice, queryId: int): bool {
@@ -1174,7 +1188,7 @@ fun validatorSetInstalled(ds: slice, elect: cell, credits: dict): bool {
         // this validator set has been installed, forget elections
         contract.setData(
             beginCell()
-            .storeBool(true) // forget current elections
+            .storeBool(false) // forget current elections
             .storeDict(credits)
             .storeDict(pastElections)
             .storeSlice(ds)
@@ -1263,6 +1277,7 @@ fun announceNewElections(ds: slice, elect: dict?, credits: dict): bool {
     return true;
 }
 
+
 // Main message handler
 fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
     var cs = inMsgCell.beginParse();
@@ -1284,17 +1299,17 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
         return;
     }
     val queryId = inMsgBody.loadUint(64);
-    if (op == 0x4e73744b) {
+    if (op == newStakeMessageTag) {
         // new stake message
         processNewStake(sAddr, msgValue, inMsgBody, queryId);
         return;
     }
-    if (op == 0x47657424) {
+    if (op == recoverStakeMessageTag) {
         // recover stake request
         recoverStake(op, sAddr, inMsgBody, queryId);
         return;
     }
-    if (op == 0x4e436f64) {
+    if (op == upgradeCodeMessageTag) {
         // upgrade code (accepted only from configuration smart contract)
         val ok = upgradeCode(sAddr, inMsgBody, queryId);
         sendMessageBack(sAddr, ok ? 0xce436f64 : 0xffffffff, queryId, op, 0, 64);
@@ -1306,7 +1321,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
         configSetConfirmed(sAddr, inMsgBody, queryId, cfgOk);
         return;
     }
-    if (op == 0x52674370) {
+    if (op == newComplaintMessageTag) {
         // new complaint
         val price = registerComplaint(sAddr, inMsgBody, msgValue);
         var mode = 64;
@@ -1320,7 +1335,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
         sendMessageBack(sAddr, ansTag + 0xf2676350, queryId, op, 0, mode);
         return;
     }
-    if (op == 0x56744370) {
+    if (op == voteForComplaintMessageTag) {
         // vote for a complaint
         val signature = inMsgBody.loadBits(512);
         val msgBody = inMsgBody;
@@ -1361,7 +1376,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
             SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
         );
         return;
-    }// unknown answer, ignore
+    }
 }
 
 // Helper functions
@@ -1428,15 +1443,6 @@ get fun participantList(): tuple {
     return l;
 }
 
-struct ExtendedParticipationList {
-    electAt: uint32,
-    electClose: uint32,
-    minStake: coins,
-    totalStake: coins,
-    participants: tuple,
-    failed: bool,
-    finished: bool
-}
 
 fun ExtendedParticipationList.empty(): ExtendedParticipationList {
     return ExtendedParticipationList {

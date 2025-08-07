@@ -1174,7 +1174,7 @@ fun validatorSetInstalled(ds: slice, elect: cell, credits: dict): bool {
         // this validator set has been installed, forget elections
         contract.setData(
             beginCell()
-            .storeBool(true) // forget current elections
+            .storeBool(false) // forget current elections
             .storeDict(credits)
             .storeDict(pastElections)
             .storeSlice(ds)

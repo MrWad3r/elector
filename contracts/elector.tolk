@@ -1,12 +1,12 @@
 tolk 1.0
 
+import "@stdlib/gas-payments"
+import "@stdlib/lisp-lists"
 import "@stdlib/tvm-dicts"
 import "@stdlib/tvm-lowlevel"
-import "@stdlib/lisp-lists"
-import "@stdlib/gas-payments"
 
 
-struct ElectorData {
+struct Storage {
     curElect: dict
     credits: dict
     pastElections: dict
@@ -15,33 +15,13 @@ struct ElectorData {
     activeHash: uint256
 }
 
-fun loadContractData(): ElectorData {
-    var cs = contract.getData().beginParse();
-    return ElectorData {
-        curElect: cs.loadDict(),
-        credits: cs.loadDict(),
-        pastElections: cs.loadDict(),
-        grams: cs.loadCoins(),
-        activeId: cs.loadUint(32),
-        activeHash: cs.loadUint(256),
-    };
+fun Storage.load() {
+    return Storage.fromCell(contract.getData());
 }
 
-fun storeContractData(data: ElectorData) {
-    contract.setData(
-            beginCell()
-            .storeDict(data.curElect)
-            .storeDict(data.credits)
-            .storeDict(
-                data
-                .pastElections)
-                .storeCoins(data.grams)
-                .storeUint(data.activeId, 32)
-                .storeUint(data.activeHash, 256)
-                .endCell()
-            );
+fun Storage.save(self) {
+    contract.setData(self.toCell());
 }
-
 
 struct Election {
     electAt: uint32
@@ -51,33 +31,6 @@ struct Election {
     members: dict
     failed: bool
     finished: bool
-}
-
-fun unpackElect(election_cell: cell): Election {
-    var es = election_cell.beginParse();
-    val election = Election {
-        electAt: es.loadUint(32),
-        electClose: es.loadUint(32),
-        minStake: es.loadCoins(),
-        totalStake: es.loadCoins(),
-        members: es.loadDict(),
-        failed: es.loadInt(1) != 0,
-        finished: es.loadInt(1) != 0,
-    };
-    es.assertEnd();
-    return election;
-}
-
-fun packElect(election: Election): cell {
-    return beginCell()
-        .storeUint(election.electAt, 32)
-        .storeUint(election.electClose, 32)
-        .storeCoins(election.minStake)
-        .storeCoins(election.totalStake)
-        .storeDict(election.members)
-        .storeInt(election.failed ? -1 : 0, 1)
-        .storeInt(election.finished ? -1 : 0, 1)
-        .endCell();
 }
 
 
@@ -91,63 +44,24 @@ struct PastElection {
     complaints: dict
 }
 
-fun unpackPastElection(fs: slice): PastElection {
-    val election = PastElection {
-        unfreezeAt: fs.loadUint(32),
-        stakeHeld: fs.loadUint(32),
-        vsetHash: fs.loadUint(256),
-        frozenDict: fs.loadDict(),
-        totalStake: fs.loadCoins(),
-        bonuses: fs.loadCoins(),
-        complaints: fs.loadDict(),
-    };
 
-    fs.assertEnd();
-    return election;
-}
-
-fun packPastElection(pe: PastElection): builder {
-    return beginCell()
-        .storeUint(pe.unfreezeAt, 32)
-        .storeUint(pe.stakeHeld, 32)
-        .storeUint(pe.vsetHash,256)
-        .storeDict(pe.frozenDict)
-        .storeCoins(pe.totalStake)
-        .storeCoins(pe.bonuses)
-        .storeDict(pe.complaints);
+fun PastElection.toBuilder(self): builder {
+    return beginCell().storeAny(self)
 }
 
 
-struct ComplaintStatus {
-    complaint: cell
+struct (0x2d) ComplaintStatus {
+    complaint: Cell<ValidatorComplaint>
     voters: dict
     vsetId: uint256
     weightRemaining: int64
 }
 
-fun unpackComplaintStatus(cs: slice): ComplaintStatus {
-    assert(cs.loadUint(8) == 0x2d, 9);
-    val status = ComplaintStatus {
-        complaint: cs.loadRef(),
-        voters: cs.loadDict(),
-        vsetId: cs.loadUint(256),
-        weightRemaining: cs.loadInt(64),
-    };
-    cs.assertEnd();
-    return status;
+fun ComplaintStatus.toBuilder(self): builder {
+    return beginCell().storeAny(self)
 }
 
-fun packComplaintStatus(cs: ComplaintStatus): builder {
-    return beginCell()
-    .storeUint(0x2d, 8)
-    .storeRef(cs.complaint)
-    .storeDict(cs.voters)
-    .storeUint(cs.vsetId,256)
-    .storeInt(cs.weightRemaining, 64);
-}
-
-
-struct ValidatorComplaint {
+struct (0xbc) ValidatorComplaint {
     validatorPubkey: uint256
     description: cell
     createdAt: uint32
@@ -158,108 +72,65 @@ struct ValidatorComplaint {
     suggestedFinePart: uint32
 }
 
-fun unpackComplaint(cs: slice): ValidatorComplaint {
-    assert(cs.loadInt(8) == 0xbc - 0x100, 9);
-    val vc = ValidatorComplaint {
-        validatorPubkey: cs.loadUint(256),
-        description: cs.loadRef(),
-        createdAt: cs.loadUint(32),
-        severity: cs.loadUint(8),
-        rewardAddr: cs.loadUint(256),
-        paid: cs.loadCoins(),
-        suggestedFine: cs.loadCoins(),
-        suggestedFinePart: cs.loadUint(32),
-    };
-    cs.assertEnd();
-    return vc;
+fun ValidatorComplaint.toBuilder(self): builder {
+    return beginCell().storeAny(self)
 }
 
-fun packComplaint(vc: ValidatorComplaint): builder {
-    return beginCell().storeInt(0xbc - 0x100, 8)
-        .storeUint(vc.validatorPubkey, 256)
-        .storeRef(vc.description)
-        .storeUint(vc.createdAt, 32)
-        .storeUint(vc.severity, 8)
-        .storeUint(vc.rewardAddr, 256)
-        .storeCoins(vc.paid)
-        .storeCoins(vc.suggestedFine)
-        .storeUint(vc.suggestedFinePart, 32);
-}
-
-
-struct ComplaintPricing {
+struct (0x1a) ComplaintPricing {
     deposit: coins
     bitPrice: coins
     cellPrice: coins
 }
 
-fun parseComplaintPrices(info: cell): ComplaintPricing {
-    var cs = info.beginParse();
-    assert(cs.loadUint(8) == 0x1a, 9);
-    val cp = ComplaintPricing {
-        deposit: cs.loadCoins(),
-        bitPrice: cs.loadCoins(),
-        cellPrice: cs.loadCoins(),
-    };
-    cs.assertEnd();
-    return cp;
-}
-
-fun getComplaintPrices(): ComplaintPricing {
-    var info = blockchain.configParam(13);
-    if (info == null) {
+fun ComplaintPricing.load() {
+    var param = blockchain.configParam(13);
+    if (param == null) {
         return ComplaintPricing {
-            deposit: ton("0") + (1 << 36),
-            bitPrice: ton("0") + 1,
-            cellPrice: ton("0") + 512,
+            deposit: 1 << 36,
+            bitPrice: 1,
+            cellPrice: 512,
         };
+    } else {
+        return ComplaintPricing.fromCell(param, {assertEndAfterReading: true});
     }
-
-    return parseComplaintPrices(info);
 }
 
-
-struct ValidatorConf {
+struct ValidatorConfig {
     electedFor: int32
     electionsBeginBefore: int32
     electionsEndBefore: int32
     stakeHeldFor: int32
 }
 
-fun getValidatorConf(): ValidatorConf {
-    var cs = blockchain.configParam(15)!.beginParse();
-
-    return ValidatorConf {
-        electedFor: cs.loadInt(32),
-        electionsBeginBefore: cs.loadInt(32),
-        electionsEndBefore: cs.loadInt(32),
-        stakeHeldFor: cs.preloadInt(32),
-    };
+fun ValidatorConfig.load() {
+    var param = blockchain.configParam(15);
+    return ValidatorConfig.fromCell(param!);
 }
 
+struct (0x12) ValidatorSet {
+    utime_since: uint32
+    utime_until: uint32
+    total: uint16
+    main: uint16
+    totalWeight: uint64
+    list: dict
+}
 
 struct CurrentVset {
-    vset: cell
+    vset: Cell<ValidatorSet>
     totalWeight: uint64
-    dict: dict
+    list: dict
 }
 
-fun getCurrentVset(): CurrentVset {
-    val vset = blockchain.configParam(34)!;
-    var cs = vset.beginParse();
-    // validators_ext#12 utime_since:uint32 utime_until:uint32
-    // total:(## 16) main:(## 16) { main <= total } { main >= 1 }
-    // total_weight:uint64
-    assert(cs.loadUint(8) == 0x12, 40);
-    cs.skipBits(32 + 32 + 16 + 16);
-    val totalWeight = cs.loadUint(64);
-    val dict = cs.loadDict();
-    cs.assertEnd();
+fun CurrentVset.load() {
+    val vset = blockchain.configParam(34)! as Cell<ValidatorSet>;
+
+    var cs = lazy vset.load();
 
     return CurrentVset {
         vset,
-        totalWeight,
-        dict,
+        totalWeight: cs.totalWeight,
+        list: cs.list,
     };
 }
 
@@ -268,10 +139,46 @@ struct ValidatorDescr {
     totalWeight: int
 }
 
-fun getValidatorDescr(idx: int): ValidatorDescr {
-    var vsetInfo = getCurrentVset();
-    var (value, found) = vsetInfo.dict.uDictGet(16, idx);
-    return ValidatorDescr { value, totalWeight: vsetInfo.totalWeight };
+fun CurrentVset.getDescr(self, idx: int) {
+    var (value, _found) = self.list.uDictGet(16, idx);
+    return ValidatorDescr { value, totalWeight: self.totalWeight };
+}
+
+type ValidatorDescription = ValidatorDescrSimple | ValidatorDescrWithAddr;
+
+// Validator descriptor variants
+struct (0x53) ValidatorDescrSimple {
+    pubkeyTag: uint32 = 0x8e81278a  // ed25519_pubkey tag
+    pubkey: uint256
+    weight: uint64
+}
+
+struct (0x73) ValidatorDescrWithAddr {
+    pubkeyTag: uint32 = 0x8e81278a  // ed25519_pubkey tag
+    pubkey: uint256
+    weight: uint64
+    adnlAddr: uint256
+}
+
+fun ValidatorDescr.loadValidatorInfo(cs: slice): ValidatorInfo {
+    val descr = lazy ValidatorDescription.fromSlice(cs);
+    var pubkey: uint256;
+    var weight: uint64;
+    match (descr) {
+        ValidatorDescrSimple => {
+            assert(descr.pubkeyTag == 0x8e81278a, 41);
+            pubkey = descr.pubkey;
+            weight = descr.weight;
+        }
+        ValidatorDescrWithAddr => {
+            assert(descr.pubkeyTag == 0x8e81278a, 41);
+            pubkey = descr.pubkey;
+            weight = descr.weight;
+        }
+        else => throw 41
+    }
+
+    return ValidatorInfo { pubkey, weight};
 }
 
 struct ValidatorInfo {
@@ -279,14 +186,21 @@ struct ValidatorInfo {
     weight: uint64
 }
 
-fun unpackValidatorDescr(cs: slice): ValidatorInfo {
-    // ed25519_pubkey#8e81278a pubkey:bits256 = SigPubKey;
-    // validator#53 public_key:SigPubKey weight:uint64 = ValidatorDescr;
-    // validator_addr#73 public_key:SigPubKey weight:uint64 adnl_addr:bits256 = ValidatorDescr;
-    assert((cs.loadUint(8) & ~0x20) == 0x53, 41); //TODO: check this
-    assert(cs.loadUint(32) == 0x8e81278a, 41);
-    return ValidatorInfo { pubkey: cs.loadUint(256), weight: cs.loadUint(64) };
+// Структура для результата unfreezing
+struct UnfreezeResult {
+    credits: dict
+    recovered: coins
 }
+
+// Структура для результата наказания
+struct PunishResult {
+    credits: dict
+    frozen: dict
+    fineUnalloc: coins
+    fineCollected: coins
+}
+
+
 
 // Message sending functions
 fun sendMessageBack(
@@ -324,7 +238,7 @@ fun returnStake(addr: address, queryId: int, reason: int) {
         0xee6f454c,
         queryId,
         reason,
-        ton("0"),
+        0,
         SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
     );
 }
@@ -360,36 +274,35 @@ fun creditTo(credits: dict, addr: int, amount: coins): dict {
 
 // Simple transfer processing
 fun processSimpleTransfer(sAddr: address, msgValue: coins) {
-    var data = loadContractData();
+    var data = Storage.load();
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
-    if (srcAddr != 0 || (srcWc + 1) != BASECHAIN || (data.activeId == 0)) {
+    if ((srcAddr != 0) | ((srcWc + 1) != BASECHAIN) | (data.activeId == 0)) {
         //TODO: check
         // simple transfer to us (credit "nobody's" account)
         data.grams += msgValue;
-        storeContractData(data);
+        Storage.save(data);
         return;
     }
 
     // zero source address -1:00..00 (collecting validator fees)
     val (fs, found) = data.pastElections.uDictGet(32, data.activeId);
     if (!found) {
-        // active validator set not found
         data.grams += msgValue;
     } else {
-        // credit active validator set bonuses
-        var pe = unpackPastElection(fs!);
+        var pe = PastElection.fromSlice(fs!, { assertEndAfterReading: true });
         pe.bonuses += msgValue;
-        data.pastElections.uDictSetBuilder(32, data.activeId, packPastElection(pe));
+        data.pastElections.uDictSetBuilder(32, data.activeId, pe.toBuilder());
     }
-    storeContractData(data);
+
+    data.save();
 }
 
 // New stake processing
 fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
     var ds = contract.getData().beginParse();
-    val election_dict = ds.loadDict();
-    if (election_dict == null || (srcWc + 1) != BASECHAIN) {
+    val electionDict = ds.loadDict();
+    if (electionDict == null || (srcWc + 1) != BASECHAIN) {
         // no elections active, or source is not in masterchain
         returnStake(sAddr, queryId, 0);
         return;
@@ -400,22 +313,19 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     val stakeAt = cs.loadUint(32);
     val maxFactor = cs.loadUint(32);
     val adnlAddr = cs.loadUint(256);
-    val signature = cs.loadRef()
-    .beginParse()
-    .preloadBits(512);
-
+    val signature = cs.loadRef().beginParse().preloadBits(512);
     cs.assertEnd();
 
     if (
         !isSliceSignatureValid(
                 beginCell()
-                .storeUint(0x654c5074, 32)
-                .storeUint(stakeAt, 32)
-                .storeUint(maxFactor, 32)
-                .storeUint(srcAddr, 256)
-                .storeUint(adnlAddr, 256)
-                .endCell()
-                .beginParse(),
+                        .storeUint(0x654c5074, 32)
+                        .storeUint(stakeAt, 32)
+                        .storeUint(maxFactor, 32)
+                        .storeUint(srcAddr, 256)
+                        .storeUint(adnlAddr, 256)
+                        .endCell()
+                        .beginParse(),
             signature,
             validatorPubkey
         )
@@ -432,7 +342,7 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     }
 
     // parse current election data
-    var election = unpackElect(election_dict!);
+    var election = Election.fromCell(electionDict!, { assertEndAfterReading: true });
     msgValue -= ton("1"); // deduct GR$1 for sending confirmation
     if ((msgValue << 12) < election.totalStake) {
         // stake smaller than 1/4096 of the total accumulated stakes, return
@@ -469,7 +379,7 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
         returnStake(sAddr, queryId, 5);
         return;
     }
-    assert(msgValue > ton("0"), 44);
+    assert(msgValue > 0, 44);
 
     acceptExternalMessage();
 
@@ -482,7 +392,7 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
             .storeUint(adnlAddr, 256)
     );
     // gather and save election data
-    val new_elect_dict = packElect(election);
+    val new_elect_dict = Election.toCell(election);
     contract.setData(beginCell().storeDict(new_elect_dict).storeSlice(ds).endCell());
     // return confirmation message
     if (queryId != 0) {
@@ -490,15 +400,11 @@ fun processNewStake(sAddr: address, msgValue: coins, cs: slice, queryId: int) {
     }
 }
 
-struct UnfreezeResult {
-    credits: dict
-    recovered: coins
-}
 
 fun unfreezeWithoutBonuses(credits: dict, freezeDict: dict, totStakes: coins): UnfreezeResult {
     var new_credits = credits;
-    var total = ton("0");
-    var recovered = ton("0");
+    var total: coins = 0;
+    var recovered: coins = 0;
     var pubkey = -1;
     do {
         var (nextKey, csOpt, found) = freezeDict.uDictGetNext(256, pubkey);
@@ -525,10 +431,10 @@ fun unfreezeWithoutBonuses(credits: dict, freezeDict: dict, totStakes: coins): U
 }
 
 fun unfreezeWithBonuses(credits: dict, freezeDict: dict, totStakes: coins, totBonuses: coins): UnfreezeResult {
-    var new_credits = credits;
-    var total = ton("0");
-    var recovered = ton("0");
-    var returnedBonuses = ton("0");
+
+    var total: coins = 0;
+    var recovered: coins = 0;
+    var returnedBonuses: coins = 0;
     var pubkey = -1;
     do {
         var (nextKey, csOpt, found) = freezeDict.uDictGetNext(256, pubkey);
@@ -546,7 +452,7 @@ fun unfreezeWithBonuses(credits: dict, freezeDict: dict, totStakes: coins, totBo
             } else {
                 var bonus = coinsMuldiv(totBonuses, stake, totStakes);
                 returnedBonuses += bonus;
-                new_credits = creditTo(new_credits, addr, stake + bonus);
+                credits = creditTo(credits, addr, stake + bonus);
             }
             total += stake;
         }
@@ -556,16 +462,17 @@ fun unfreezeWithBonuses(credits: dict, freezeDict: dict, totStakes: coins, totBo
 }
 
 fun unfreezeAll(credits: dict, pastElections: dict, electId: int): (dict, dict, coins) {
-    var (fs, found) = pastElections.uDictDeleteAndGet(32, electId);
+    var (fsOpt, found) = pastElections.uDictDeleteAndGet(32, electId);
     if (!found) {
         // no elections with this id
-        return (credits, pastElections, ton("0"));
+        return (credits, pastElections, 0);
     }
-    var pe: PastElection = unpackPastElection(fs!);
-    var unusedPrizes = pe.bonuses > ton("0")
-         ? unfreezeWithBonuses(credits, pe.frozenDict, pe.totalStake, pe.bonuses).recovered
-         : unfreezeWithoutBonuses(credits, pe.frozenDict, pe.totalStake).recovered;
-    return (credits, pastElections, unusedPrizes);
+    var fs = fsOpt!;
+    var pe: PastElection = PastElection.fromSlice(fs, { assertEndAfterReading: true });
+    var result = pe.bonuses > 0
+         ? unfreezeWithBonuses(credits, pe.frozenDict, pe.totalStake, pe.bonuses)
+         : unfreezeWithoutBonuses(credits, pe.frozenDict, pe.totalStake);
+    return (result.credits, pastElections, result.recovered);
 }
 
 // Config set confirmed
@@ -573,11 +480,11 @@ fun configSetConfirmed(sAddr: address, cs: slice, queryId: int, success: bool) {
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
     val configAddr = blockchain.configParam(0)!.beginParse().preloadUint(256);
     var ds = contract.getData().beginParse();
-    var elect = ds.loadDict();
-    if ((srcWc + 1) != BASECHAIN || (srcAddr != configAddr) || elect == null) {
+    var electionDict = ds.loadDict();
+    if ((srcWc + 1) != BASECHAIN || (srcAddr != configAddr) || electionDict == null) {
         return;
     }
-    var election = unpackElect(elect);
+    var election = Election.fromCell(electionDict!, { assertEndAfterReading: true });
     if ((election.electAt != queryId) || !election.finished) {
         //TODO: double check this condition
         // not these elections, or elections not finished yet
@@ -611,7 +518,7 @@ fun recoverStake(op: int, sAddr: address, cs: slice, queryId: int) {
             0xfffffffe,
             queryId,
             op,
-            ton("0"),
+            0,
             SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
         );
         return;
@@ -626,7 +533,7 @@ fun recoverStake(op: int, sAddr: address, cs: slice, queryId: int) {
             0xfffffffe,
             queryId,
             op,
-            ton("0"),
+            0,
             SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
         );
         return;
@@ -648,126 +555,130 @@ fun recoverStake(op: int, sAddr: address, cs: slice, queryId: int) {
 
 
 fun afterCodeUpgrade(sAddr: address, cs: slice, queryId: int) {
-    sendMessageBack(sAddr, 0xce436f64, queryId, 0x4e436f64, ton("0"), 64);
+    sendMessageBack(sAddr, 0xce436f64, queryId, 0x4e436f64, 0, 64);
 }
 
 fun upgradeCode(sAddr: address, cs: slice, queryId: int): bool {
     val cAddr = blockchain.configParam(0);
     if (cAddr == null) {
-        // no configuration smart contract known
         return false;
     }
+
     val configAddr = cAddr!.beginParse().preloadUint(256);
     val (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
+
     if ((srcWc + 1) != BASECHAIN || (srcAddr != configAddr)) {
-        // not from configuration smart contract, return error
         return false;
     }
+
     acceptExternalMessage();
     val code = cs.loadRef();
     contract.setCodePostponed(code);
+
     if (!cs.isEmpty()) {
         setTvmRegisterC3(transformSliceToContinuation(code.beginParse()));
         afterCodeUpgrade(sAddr, cs, queryId);
-        throw (0);
+        throw 0;
     }
+
     return true;
 }
 
+
 fun registerComplaint(sAddr: address, complaint: slice, msgValue: coins): int {
-    var (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
+   var (srcWc, srcAddr) = sAddr.getWorkchainAndHash();
     if ((srcWc + 1) != BASECHAIN) {
-        // not from masterchain, return error
         return -1;
     }
+
     if (complaint.depth() >= 128) {
-        return -3; // invalid complaint
+        return -3;
     }
-    var data = loadContractData();
+
+    var data = Storage.load();
     var electionId = complaint.loadUint(32);
     var (fs, found) = data.pastElections.uDictGet(32, electionId);
     if (!found) {
-        // election not found
         return -2;
     }
+
     fs = fs!;
     var expireIn = fs.preloadUint(32) - blockchain.now();
     if (expireIn <= 0) {
-        // already expired
         return -4;
     }
-    var vc = unpackComplaint(complaint);
+
+
+    var vc = ValidatorComplaint.fromSlice(complaint, {assertEndAfterReading: true});
     vc.rewardAddr = srcAddr;
     vc.createdAt = blockchain.now();
 
-    // compute complaint storage/creation price
-    val pricing = getComplaintPrices();
+    val pricing = ComplaintPricing.load();
     val (_, bits, refs) = complaint.calculateSizeStrict(4096);
     val pps = (bits + 1024) * pricing.bitPrice + (refs + 2) * pricing.cellPrice;
     vc.paid = pps * expireIn + pricing.deposit;
 
     if (msgValue < vc.paid + ton("1")) {
-        // not enough money
         return -5;
     }
-    // re-pack modified complaint
-    val newComplaint = packComplaint(vc).endCell();
-    var pe = unpackPastElection(fs);
+
+
+    // Используем автоматический парсинг PastElection
+    val newComplaint = vc.toBuilder().endCell() as Cell<ValidatorComplaint>;
+    var pe = PastElection.fromSlice(fs, { assertEndAfterReading: true });
     val (validatorFsOpt, validatorFound) = pe.frozenDict.uDictGet(256, vc.validatorPubkey);
     if (!validatorFound) {
-        // no such validator, cannot complain
         return -6;
     }
+
     var validatorFs = validatorFsOpt!;
-    validatorFs.skipBits(256 + 64); // addr weight
+    validatorFs.skipBits(256 + 64);
     val validatorStake = validatorFs.loadCoins();
     val fine = vc.suggestedFine + coinsMuldiv(validatorStake, vc.suggestedFinePart, 1 << 32);
+
     if (fine > validatorStake) {
-        // validator's stake is less than suggested fine
         return -7;
     }
+
     if (fine <= vc.paid) {
-        // fine is less than the money paid for creating complaint
         return -8;
     }
-    // create complaint status
-    val cstatus = packComplaintStatus(ComplaintStatus {
+
+    // Создаем статус жалобы
+    val cstatus = ComplaintStatus {
         complaint: newComplaint,
         voters: createEmptyDict(),
         vsetId: 0,
         weightRemaining: 0,
-    });
+    };
 
-    // save complaint status into complaints
-    val cplId = newComplaint.hash();
-    val packResult = pe.complaints.uDictSetBuilderIfNotExists(256, cplId, cstatus);
+    val complaintId = newComplaint.hash();
+    val packResult = pe.complaints.uDictSetBuilderIfNotExists(256, complaintId,
+        beginCell().storeAny(cstatus)
+        );
+
     if (!packResult) {
-        return -9; // complaint already exists
+        return -9;
     }
-    // pack past election info
-    data.pastElections.uDictSetBuilder(32, electionId, packPastElection(pe));
-    // pack persistent data
-    storeContractData(data);
+
+    // Сохраняем обновленную информацию
+    data.pastElections.uDictSetBuilder(32, electionId, beginCell().storeAny(pe));
+    data.save();
+
     return vc.paid;
 }
 
-struct PunishResult {
-    credits: dict
-    frozen: dict
-    fineUnalloc: coins
-    fineCollected: coins
-}
 
 fun punish(credits: dict, frozen: dict, complaint: cell): PunishResult {
-    val vc = unpackComplaint(complaint.beginParse());
+    var vc = ValidatorComplaint.fromSlice(complaint.beginParse(), { assertEndAfterReading: true });
     val (csOpt, found) = frozen.uDictGet(256, vc.validatorPubkey);
     if (!found) {
         // no validator to punish
         return PunishResult {
             credits,
             frozen,
-            fineUnalloc: ton("0"),
-            fineCollected: ton("0"),
+            fineUnalloc: 0,
+            fineCollected: 0,
         };
     }
     var cs = csOpt!;
@@ -788,24 +699,25 @@ fun punish(credits: dict, frozen: dict, complaint: cell): PunishResult {
     val reward = coinsMin(fine >> 3, vc.paid * 8);
     val newCredits = creditTo(credits, vc.rewardAddr, reward);
     return PunishResult {
-        credits: createEmptyDict(),
+        credits: newCredits,
         frozen: frozen,
         fineUnalloc: fine - reward,
         fineCollected: fine,
     };
 }
 
-fun registerVote(complaints: dict, chash: int, idx: int, weight: int): (dict, cell?, int) {
-    val (cStatusOpt, found) = complaints.uDictGet(256, chash);
+fun registerVote(complaints: dict, hash: int, idx: int, weight: int): (dict, cell?, int) {
+    val (cStatusOpt, found) = complaints.uDictGet(256, hash);
     if (!found) {
         // complaint not found
         return (complaints, null, -1);
     }
     val cStatus = cStatusOpt!;
-    val currentVset = getCurrentVset();
+    val currentVset = CurrentVset.load();
     val curVsetId = currentVset.vset.hash();
-    var cs = unpackComplaintStatus(cStatus);
+    var cs = ComplaintStatus.fromSlice(cStatus, {assertEndAfterReading: true});
     var vsetOld = (cs.vsetId != curVsetId);
+
     if ((cs.weightRemaining < 0) & vsetOld) {
         // previous validator set already collected 2/3 votes, skip new votes
         return (complaints, null, -3);
@@ -827,7 +739,7 @@ fun registerVote(complaints: dict, chash: int, idx: int, weight: int): (dict, ce
     cs.weightRemaining -= weight;
     oldWr ^= cs.weightRemaining;
     // save voters and weightRemaining
-    complaints.uDictSetBuilder(256, chash, packComplaintStatus(cs));
+    complaints.uDictSetBuilder(256, hash, ComplaintStatus.toBuilder(cs));
     if (oldWr >= 0) {
         // not enough votes or already accepted
         return (complaints, null, 1);
@@ -836,16 +748,17 @@ fun registerVote(complaints: dict, chash: int, idx: int, weight: int): (dict, ce
     return (complaints, cs.complaint, 2);
 }
 
-fun proceedRegisterVote(electionId: int, chash: int, idx: int, weight: int): int {
-    var data = loadContractData();
-    val (fsOpt, found) = data.pastElections.uDictGet(32, electionId);
+fun proceedRegisterVote(electionId: int, hash: int, idx: int, weight: int): int {
+    var data = Storage.load();
+    val (fsOpt, found) = data.pastElections
+    .uDictGet(32, electionId);
     if (!found) {
         // election not found
         return -2;
     }
     val fs = fsOpt!;
-    var pe = unpackPastElection(fs);
-    var (newComplaints, acceptedComplaint, status) = registerVote(pe.complaints, chash, idx, weight);
+    var pe = PastElection.fromSlice(fs, {assertEndAfterReading: true});
+    var (newComplaints, acceptedComplaint, status) = registerVote(pe.complaints, hash, idx, weight);
     if (status <= 0) {
         return status;
     }
@@ -861,8 +774,8 @@ fun proceedRegisterVote(electionId: int, chash: int, idx: int, weight: int): int
         data.grams += punishResult.fineUnalloc;
         pe.totalStake -= punishResult.fineCollected;
     }
-    data.pastElections.uDictSetBuilder(32, electionId, packPastElection(pe));
-    storeContractData(data);
+    data.pastElections.uDictSetBuilder(32, electionId, pe.toBuilder());
+    data.save();
     return status;
 }
 
@@ -898,7 +811,7 @@ fun postponeElections(): bool {
 
 // computes the total stake out of the first n entries of list l
 fun computeTotalStake(l: tuple, n: int, mStake: coins): coins {
-    var totStake = ton("0");
+    var totStake: coins = 0;
     var currentList = l;
     repeat (n) {
         var (head, newList) = listSplit<tuple>(currentList);
@@ -956,7 +869,7 @@ fun tryElect(
     } while (found);
     n = intMin(n, maxValidators);
     if (n < minValidators) {
-        return (credits, createEmptyDict(), 0, createEmptyDict(), ton("0"), 0);
+        return (credits, createEmptyDict(), 0, createEmptyDict(), 0, 0);
     }
     var l = createEmptyList();
 
@@ -985,7 +898,7 @@ fun tryElect(
         l1 = listGetTail(l1)!; //TODO: double check this !
     }
 
-    var (bestStake, m) = (ton("0"), 0);
+    var (bestStake, m) = (0, 0);
     do {
         val (head: tuple, newList) = listSplit(l1);
         l1 = newList!; //todo: double check this
@@ -1000,7 +913,7 @@ fun tryElect(
     } while (i < n);
 
     if ((m == 0) || (bestStake < minTotalStake)) {
-        return (credits, createEmptyDict(), 0, createEmptyDict(), ton("0"), 0);
+        return (credits, createEmptyDict(), 0, createEmptyDict(), 0, 0);
     }
     // we have to select first m validators from list l
     l.stackMoveToTop();
@@ -1015,7 +928,7 @@ fun tryElect(
 
     // create both the new validator set and the refund set
     i = 0; //reset counter
-    var totStake = ton("0");
+    var totStake: coins = 0;
     var totWeight = 0;
     var vset = createEmptyDict();
     var frozen = createEmptyDict();
@@ -1046,6 +959,7 @@ fun tryElect(
             var weight = (trueStake << 60) / bestStake;
             totStake += trueStake;
             totWeight += weight;
+
             var vInfo = beginCell().storeUint(adnlAddr != 0 ? 0x73 : 0x53, 8) // validator_addr#73 or validator#53
                 .storeUint(0x8e81278a, 32) // ed25519_pubkey#8e81278a
                 .storeUint(pubkey, 256) // pubkey:bits256
@@ -1063,7 +977,7 @@ fun tryElect(
                     .storeBool(true)
             );
         }
-        if (stake != ton("0")) {
+        if (stake != 0) {
             // non-zero unused part of the stake, credit to the source address
             credits = creditTo(credits, srcAddr, stake);
         }
@@ -1074,7 +988,7 @@ fun tryElect(
 }
 
 fun conductElections(ds: slice, elect: cell, credits: dict): bool {
-    var election = unpackElect(elect);
+    var election = Election.fromCell(elect, { assertEndAfterReading: true });
     if (blockchain.now() < election.electClose) {
         // elections not finished yet
         return false;
@@ -1083,6 +997,7 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
         // no configuration smart contract to send result to
         return postponeElections();
     }
+
     var cs = blockchain.configParam(17)!.beginParse();
     var minStake = cs.loadCoins();
     var maxStake = cs.loadCoins();
@@ -1113,7 +1028,7 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
     // pack elections; if cnt==0, set failed=true, finished=false.
     var failed = (cnt == 0);
     var finished = !failed;
-    elect = packElect(Election {
+    elect = Election {
         electAt: election.electAt,
         electClose: election.electClose,
         minStake: minStake,
@@ -1121,7 +1036,7 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
         members: election.members,
         failed: failed,
         finished: finished,
-    });
+    }.toCell();
 
     if (cnt == 0) {
         // elections failed, set elect_failed to true
@@ -1130,12 +1045,12 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
     }
     // serialize a query to the configuration smart contract
     // to install the computed validator set as the next validator set
-    var validatorConf = getValidatorConf();
-    var start = intMax(blockchain.now() + validatorConf.electionsEndBefore - 60, election.electAt);
+    var validatorConfig = ValidatorConfig.load();
+    var start = intMax(blockchain.now() + validatorConfig.electionsEndBefore - 60, election.electAt);
     var mainValidators = blockchain.configParam(16)!.beginParse().skipBits(16).preloadUint(16);
     var vset = beginCell().storeUint(0x12, 8) // validators_ext#12
         .storeUint(start, 32) // utime_since:uint32
-        .storeUint(start + validatorConf.electedFor, 32) // utime_until:uint32
+        .storeUint(start + validatorConfig.electedFor, 32) // utime_until:uint32
         .storeUint(cnt, 16) // total:(## 16)
         .storeUint(intMin(cnt, mainValidators), 16) // main:(## 16)
         .storeUint(totalWeight, 64) // total_weight:uint64
@@ -1144,33 +1059,36 @@ fun conductElections(ds: slice, elect: cell, credits: dict): bool {
     var configAddr = blockchain.configParam(0)!.beginParse().preloadUint(256);
     sendValidatorSetToConfig(configAddr, vset, election.electAt);
     // add frozen to the dictionary of past elections
-    var pastElections = ds.loadDict();
-    pastElections.uDictSetBuilder(
-        32,
-        election.electAt,
-        packPastElection(PastElection {
-            unfreezeAt: start + validatorConf.electedFor + validatorConf.stakeHeldFor,
-            stakeHeld: validatorConf.stakeHeldFor as uint32, //TODO: found incosistency in original func
+    var pastElectionsDict = ds.loadDict();
+
+    val electionsBuilder = PastElection {
+            unfreezeAt: start + validatorConfig.electedFor + validatorConfig.stakeHeldFor,
+            stakeHeld: validatorConfig.stakeHeldFor as uint32, //TODO: found incosistency in original func
             vsetHash: vset.hash(),
             frozenDict: frozen,
             totalStake: totalStakes,
-            bonuses: ton("0"),
+            bonuses: 0,
             complaints: createEmptyDict(),
-        })
+    }.toBuilder();
+
+    pastElectionsDict.uDictSetBuilder(
+        32,
+        election.electAt,
+        electionsBuilder
     );
     // store credits and frozen until end
     contract.setData(
         beginCell()
         .storeDict(elect)
         .storeDict(newCredits)
-        .storeDict(pastElections)
+        .storeDict(pastElectionsDict)
         .storeSlice(ds)
         .endCell());
     return true;
 }
 
 fun updateActiveVsetId(): bool {
-    var data = loadContractData();
+    var data = Storage.load();
     val curHash = blockchain.configParam(34)!.hash();
     if (curHash == data.activeHash) {
         // validator set unchanged
@@ -1220,24 +1138,22 @@ fun updateActiveVsetId(): bool {
                         .storeCoins(bonuses)
                         .storeSlice(fs)
                 );
-                data.activeId = id;
-                // found
+
                 found = false;
             }
         }
     } while (found);
-    if (id == -1) {
-        data.activeId = 0;
-    }
+
+    data.activeId = id == -1 ? 0 : id;
     data.activeHash = curHash;
-    storeContractData(data);
+    data.save();
     return true;
 }
 
 
 
 fun validatorSetInstalled(ds: slice, elect: cell, credits: dict): bool {
-    val election = unpackElect(elect);
+    val election = Election.fromCell(elect, { assertEndAfterReading: true });
     if (!election.finished) {
         // elections not finished yet
         return false;
@@ -1270,7 +1186,7 @@ fun validatorSetInstalled(ds: slice, elect: cell, credits: dict): bool {
 }
 
 fun checkUnfreeze(): bool {
-    var data = loadContractData();
+    var data = Storage.load();
     var id = -1;
     do {
         var (nextKeyOpt, fsOpt, found) = data.pastElections.uDictGetNext(32, id);
@@ -1289,7 +1205,7 @@ fun checkUnfreeze(): bool {
                 data.pastElections = newPastElections;
                 data.grams += unusedPrizes;
                 // unfreeze only one at time, exit loop
-                storeContractData(data);
+                data.save();
                 // exit loop
                 found = false;
             }
@@ -1316,10 +1232,10 @@ fun announceNewElections(ds: slice, elect: dict?, credits: dict): bool {
     }
     curVset = curVset!;
 
-    val validatorConf = getValidatorConf();
+    val validatorConfig = ValidatorConfig.load();
     val curValidUntil = curVset.beginParse().skipBits(8 + 32).preloadUint(32);
     var t = blockchain.now();
-    val t0 = curValidUntil - validatorConf.electionsBeginBefore;
+    val t0 = curValidUntil - validatorConfig.electionsBeginBefore;
     if (t < t0) {
         // too early for the next elections
         return false;
@@ -1332,17 +1248,17 @@ fun announceNewElections(ds: slice, elect: dict?, credits: dict): bool {
     // get stake parameters
     val minStake = blockchain.configParam(17)!.beginParse().loadCoins();
     // announce new elections
-    val electAt = t + validatorConf.electionsBeginBefore;
-    val electClose = electAt - validatorConf.electionsEndBefore;
-    elect = packElect(Election {
+    val electAt = t + validatorConfig.electionsBeginBefore;
+    val electClose = electAt - validatorConfig.electionsEndBefore;
+    elect = Election {
         electAt: electAt,
         electClose: electClose,
         minStake: minStake,
-        totalStake: ton("0"),
+        totalStake: 0,
         members: createEmptyDict(),
         failed: false,
         finished: false,
-    });
+    }.toCell();
     contract.setData(beginCell().storeDict(elect).storeDict(credits).storeSlice(ds).endCell());
     return true;
 }
@@ -1381,7 +1297,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
     if (op == 0x4e436f64) {
         // upgrade code (accepted only from configuration smart contract)
         val ok = upgradeCode(sAddr, inMsgBody, queryId);
-        sendMessageBack(sAddr, ok ? 0xce436f64 : 0xffffffff, queryId, op, ton("0"), 64);
+        sendMessageBack(sAddr, ok ? 0xce436f64 : 0xffffffff, queryId, op, 0, 64);
         return;
     }
     var cfgOk = (op == 0xee764f4b);
@@ -1401,14 +1317,14 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
             ansTag = 0;
             mode = 128;
         }
-        sendMessageBack(sAddr, ansTag + 0xf2676350, queryId, op, ton("0"), mode);
+        sendMessageBack(sAddr, ansTag + 0xf2676350, queryId, op, 0, mode);
         return;
     }
     if (op == 0x56744370) {
         // vote for a complaint
         val signature = inMsgBody.loadBits(512);
         val msgBody = inMsgBody;
-        val (signTag, validatorIdx, electionId, chash) = (
+        val (signTag, validatorIdx, electionId, hash) = (
             inMsgBody.loadUint(32),
             inMsgBody.loadUint(16),
             inMsgBody.loadUint(32),
@@ -1417,17 +1333,18 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
         inMsgBody.assertEnd();
 
         assert(signTag == 0x56744350, 37);
-        val vdescr = getValidatorDescr(validatorIdx);
-        assert(vdescr.value != null, 34);
-        val valInfo = unpackValidatorDescr(vdescr.value);
-        assert(isSliceSignatureValid(msgBody, signature, valInfo.pubkey), 34);
-        val res = proceedRegisterVote(electionId, chash, validatorIdx, valInfo.weight);
+        val currentVset = CurrentVset.load();
+        val description = currentVset.getDescr(validatorIdx);
+        assert(description.value != null, 34);
+        val validatorInfo = ValidatorDescr.loadValidatorInfo(description.value);
+        assert(isSliceSignatureValid(msgBody, signature, validatorInfo.pubkey), 34);
+        val res = proceedRegisterVote(electionId, hash, validatorIdx, validatorInfo.weight);
         sendMessageBack(
             sAddr,
             res + 0xd6745240,
             queryId,
             op,
-            ton("0"),
+            0,
             SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
         );
         return;
@@ -1440,7 +1357,7 @@ fun onInternalMessage(msgValue: coins, inMsgCell: cell, inMsgBody: slice) {
             0xffffffff,
             queryId,
             op,
-            ton("0"),
+            0,
             SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
         );
         return;
@@ -1482,21 +1399,21 @@ get fun activeElectionId(): int {
 get fun participatesIn(validatorPubkey: int): coins {
     val elect = contract.getData().beginParse().preloadDict();
     if (elect == null) {
-        return ton("0");
+        return 0;
     }
-    val election = unpackElect(elect!);
+    val election = Election.fromCell(elect, {assertEndAfterReading: true});
     var (mem, found) = election.members.uDictGet(256, validatorPubkey);
-    return found ? mem!.loadCoins() : ton("0");
+    return found ? mem!.loadCoins() : 0;
 }
 
 // returns the list of all participants of current elections with their stakes
 get fun participantList(): tuple {
     val elect = contract.getData().beginParse().preloadDict();
     if (elect == null) {
-        return [] as tuple;
+        return createEmptyTuple();
     }
-    val election = unpackElect(elect!);
-    var l = [] as tuple; //TODO: safe?
+    val election = Election.fromCell(elect, {assertEndAfterReading: true});
+    var l = createEmptyTuple();
     var id = (1 << 255) + ((1 << 255) - 1);
     do {
         val (nextKey, fsOpt, f) = election.members.uDictGetPrev(256, id);
@@ -1504,21 +1421,43 @@ get fun participantList(): tuple {
             id = nextKey!;
             var fs = fsOpt!;
 
-            val head = [id, fs.loadCoins()] as tuple; //TODO: safe?
+            val head = [id, fs.loadCoins()] as tuple;
             l = listPrepend(head, l);
         }
     } while (f);
     return l;
 }
 
+struct ExtendedParticipationList {
+    electAt: uint32,
+    electClose: uint32,
+    minStake: coins,
+    totalStake: coins,
+    participants: tuple,
+    failed: bool,
+    finished: bool
+}
+
+fun ExtendedParticipationList.empty(): ExtendedParticipationList {
+    return ExtendedParticipationList {
+        electAt: 0,
+        electClose: 0,
+        minStake: 0,
+        totalStake: 0,
+        participants: createEmptyTuple(),
+        failed: false,
+        finished: false
+    }
+}
+
 // returns the list of all participants of current elections with their data
-get fun participantListExtended(): (int, int, coins, coins, tuple, bool, bool) {
+get fun participantListExtended(): ExtendedParticipationList {
     var elect = contract.getData().beginParse().preloadDict();
     if (elect == null) {
-        return (0, 0, ton("0"), ton("0"), [] as tuple, false, false); //TODO: nil? is it safe?
+        return ExtendedParticipationList.empty();
     }
-    val election = unpackElect(elect);
-    var l = [] as tuple; //TODO is it safe?
+    val election = Election.fromCell(elect);
+    var l = createEmptyTuple();
     var id = (1 << 255) + ((1 << 255) - 1);
     do {
         var (nextKey, cs, found) = election.members.uDictGetPrev(256, id);
@@ -1537,15 +1476,15 @@ get fun participantListExtended(): (int, int, coins, coins, tuple, bool, bool) {
             l = listPrepend(head, l);
         }
     } while (found);
-    return (
-        election.electAt,
-        election.electClose,
-        election.minStake,
-        election.totalStake,
-        l,
-        election.failed,
-        election.finished
-    );
+    return ExtendedParticipationList {
+        electAt: election.electAt,
+        electClose: election.electClose,
+        minStake: election.minStake,
+        totalStake: election.totalStake,
+        participants: l,
+        failed: election.failed,
+        finished: election.finished
+    };
 }
 
 // computes the return stake
@@ -1553,14 +1492,14 @@ get fun computeReturnedStake(walletAddr: int): coins {
     var cs = contract.getData().beginParse();
     val (_, credits) = (cs.loadDict(), cs.loadDict());
     var (valueOpt, found) = credits.uDictGet(256, walletAddr);
-    return found ? valueOpt!.loadCoins() : ton("0");
+    return found ? valueOpt!.loadCoins() : 0;
 }
 
 // returns the list of past election ids
 get fun pastElectionIds(): tuple {
-    val data = loadContractData();
+    var data = Storage.load();
     var id = (1 << 32);
-    var list = [] as tuple; //TODO: nil from func? safe?
+    var list = createEmptyTuple(); //TODO: nil from func? safe?
     do {
         var (nextKey, fsOpt, found) = data.pastElections.uDictGetPrev(32, id);
         if (found) {
@@ -1573,7 +1512,7 @@ get fun pastElectionIds(): tuple {
 
 get fun complaintStoragePrice(bits: int, refs: int, expireIn: int): coins {
     // compute complaint storage/creation price
-    val pricing = getComplaintPrices();
+    val pricing = ComplaintPricing.load();
     val pps = (bits + 1024) * pricing.bitPrice + (refs + 2) * pricing.cellPrice;
     val paid = pps * expireIn + pricing.deposit;
     return paid + ton("1");
